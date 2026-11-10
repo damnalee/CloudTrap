@@ -5,6 +5,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     CLOUDTRAP_DATA_DIR=/data/processed
 
 WORKDIR /app
+
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir --disable-pip-version-check -r /app/requirements.txt
+
 COPY app.py /app/app.py
 
 RUN useradd --system --uid 10001 --no-create-home cloudtrap

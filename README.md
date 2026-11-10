@@ -198,7 +198,7 @@ docker compose exec localstack awslocal cloudwatch list-metrics \
   --namespace CloudTrap
 ~~~
 
-The dashboard currently reads the local `data/processed` artifacts. It is not yet connected directly to DynamoDB; LocalStack resource ingestion is verified separately using the AWS CLI commands above.
+The dashboard reads the three LocalStack DynamoDB tables through Boto3 and displays their event, alert and incident records. It scans at most 1,000 rows per table, uses a strict response-field whitelist, and never returns credentials or raw command content. If LocalStack is unavailable, it falls back to the local `data/processed` JSON artifacts. The dashboard remains bound to `127.0.0.1:8501`; before adapting this scan-based prototype for production-scale AWS data, replace scans with indexed queries and add server-side caching.
 
 LocalStack state in the selected Community image may be recreated when the container is recreated. The ready hook is idempotent and provisions the resources again, but test records may need to be regenerated and uploaded after a reset.
 

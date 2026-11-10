@@ -27,9 +27,21 @@ services:
 
     environment:
       CLOUDTRAP_DATA_DIR: /data/processed
+      CLOUDTRAP_DATA_SOURCE: dynamodb
+      CLOUDTRAP_ENDPOINT_URL: http://localstack:4566
+      EVENTS_TABLE: CloudTrapEvents
+      ALERTS_TABLE: CloudTrapAlerts
+      INCIDENTS_TABLE: CloudTrapIncidents
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
 
     volumes:
       - ./data/processed:/data/processed:ro
+
+    depends_on:
+      localstack:
+        condition: service_healthy
 
     read_only: true
     tmpfs:

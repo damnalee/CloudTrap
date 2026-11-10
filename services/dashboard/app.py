@@ -4,6 +4,8 @@
 import argparse
 import json
 import os
+from decimal import Decimal
+from collections import Counter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -44,7 +46,7 @@ h1{font-size:21px;letter-spacing:.2px;margin:0}.sub{color:var(--muted);font-size
   <header class="top">
     <div class="brand">
       <div class="mark">CT</div>
-      <div><h1>CloudTrap</h1><div class="sub">Honeypot security operations · Local environment</div></div>
+      <div><h1>CloudTrap</h1><div class="sub">Honeypot security operations · Local AWS data</div></div>
     </div>
     <div class="actions">
       <div class="status"><span class="dot"></span><span id="updated">Connecting…</span></div>
@@ -79,7 +81,7 @@ h1{font-size:21px;letter-spacing:.2px;margin:0}.sub{color:var(--muted);font-size
       <div class="card"><h2>Recent activity</h2><div id="activity-list"><div class="empty">No event data yet.</div></div></div>
     </div>
   </section>
-  <div class="foot">CloudTrap prototype · Dashboard bound to localhost · Captured credentials and raw command text are not displayed</div>
+  <div class="foot">CloudTrap local dashboard · DynamoDB-backed view · Credentials and raw command text are never served</div>
 </main>
 <script>
 const $ = id => document.getElementById(id);
@@ -110,7 +112,7 @@ function render(){
   $("ips").textContent=(s.unique_source_ips??0).toLocaleString();
   $("alerts").textContent=(a.total_alerts??0).toLocaleString();
   $("incidents").textContent=(snapshot.incident_total??incidents.length).toLocaleString();
-  $("updated").textContent="Updated "+new Date().toLocaleTimeString();
+  $("updated").textContent=(snapshot.data_source||"Local data")+" · "+new Date().toLocaleTimeString();
 
   renderIncidents();
 
@@ -186,11 +188,125 @@ def read_recent_events(limit=100):
     return events[-limit:]
 
 
+def json_native(value):
+    """Convert DynamoDB Decimal scalars to JSON-safe numeric types."""
+    if isinstance(value, Decimal):
+        return int(value) if value == value.to_integral_value() else float(value)
+    return value
+
+
+def assemble_dynamodb_snapshot(event_rows, alert_rows, incident_rows):
+    """Build a strictly whitelisted dashboard response from DynamoDB rows."""
+    event_counts = Counter()
+    source_counts = Counter()
+    sessions = set()
+    safe_events = []
+    successful_logins = 0
+    failed_logins = 0
+    command_count = 0
+
+    event_fields = ("timestamp", "event_type", "source_ip", "session_id", "protocol")
+    for row in event_rows:
+        event_type = row.get("event_type", "unknown")
+        event_counts[event_type] += 1
+        if row.get("source_ip"):
+            source_counts[row["source_ip"]] += 1
+        if row.get("session_id"):
+            sessions.add(row["session_id"])
+        if row.get("auth_result") == "success":
+            successful_logins += 1
+        elif row.get("auth_result") == "failed":
+            failed_logins += 1
+        if event_type == "cowrie.command.input":
+            command_count += 1
+        safe_events.append({key: row[key] for key in event_fields if row.get(key) is not None})
+
+    safe_events.sort(key=lambda item: item.get("timestamp", ""))
+    summary = {
+        "total_events": len(event_rows),
+        "unique_sessions": len(sessions),
+        "unique_source_ips": len(source_counts),
+        "login_attempts": {
+            "successful": successful_logins,
+            "failed": failed_logins,
+        },
+        "commands_observed": command_count,
+        "events_by_type": dict(sorted(event_counts.items())),
+        "top_source_ips": [
+            {"ip": ip, "events": count}
+            for ip, count in source_counts.most_common(10)
+        ],
+    }
+
+    alert_fields = (
+        "rule_id", "severity", "source_ip", "session_id", "occurred_at",
+        "description", "failed_attempts", "preceding_failures", "threshold",
+        "window_minutes",
+    )
+    safe_alerts = [
+        {key: json_native(row[key]) for key in alert_fields if row.get(key) is not None}
+        for row in alert_rows
+    ]
+    safe_alerts.sort(key=lambda item: item.get("occurred_at", ""))
+
+    incident_fields = (
+        "incident_id", "severity", "source_ip", "first_seen", "last_seen",
+        "duration_seconds", "alert_count", "attack_patterns", "session_ids",
+    )
+    safe_incidents = [
+        {key: json_native(row[key]) for key in incident_fields if row.get(key) is not None}
+        for row in incident_rows
+    ]
+    safe_incidents.sort(key=lambda item: item.get("first_seen", ""))
+
+    return {
+        "data_source": "LocalStack DynamoDB",
+        "summary": summary,
+        "alerts": {
+            "total_alerts": len(safe_alerts),
+            "alerts": safe_alerts[-100:],
+        },
+        "incidents": safe_incidents[-100:],
+        "incident_total": len(safe_incidents),
+        "recent_events": safe_events[-100:],
+    }
+
+
+def read_dynamodb_table(table_name, limit=1000):
+    """Read a bounded page from the local DynamoDB table."""
+    import boto3
+
+    endpoint = os.environ.get("CLOUDTRAP_ENDPOINT_URL") or None
+    resource = boto3.resource(
+        "dynamodb",
+        region_name=os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
+        endpoint_url=endpoint,
+    )
+    response = resource.Table(table_name).scan(Limit=limit)
+    return response.get("Items", [])
+
+
+def make_dynamodb_snapshot():
+    event_rows = read_dynamodb_table(os.environ.get("EVENTS_TABLE", "CloudTrapEvents"))
+    alert_rows = read_dynamodb_table(os.environ.get("ALERTS_TABLE", "CloudTrapAlerts"))
+    incident_rows = read_dynamodb_table(os.environ.get("INCIDENTS_TABLE", "CloudTrapIncidents"))
+    return assemble_dynamodb_snapshot(event_rows, alert_rows, incident_rows)
+
+
 def make_snapshot():
+    source = os.environ.get("CLOUDTRAP_DATA_SOURCE", "local").lower()
+    if source in {"dynamodb", "localstack", "auto"}:
+        try:
+            return make_dynamodb_snapshot()
+        except Exception as error:
+            # Keep the dashboard available if LocalStack is temporarily offline.
+            print(f"DynamoDB dashboard source unavailable: {type(error).__name__}")
+
     summary = read_json("summary.json", {})
     alerts = read_json("alerts.json", {"total_alerts": 0, "alerts": []})
     incidents = read_json("incidents.json", {"total_incidents": 0, "incidents": []})
     return {
+        "data_source": "Local JSON files",
         "summary": summary,
         "alerts": alerts,
         "incidents": incidents.get("incidents", []),
