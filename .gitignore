@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Data
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+
+# Docker
+*.log
+
+# macOS and IDEs
+.DS_Store
+.vscode/
+.idea/
+
+# Cowrie runtime data
+/data/cowrie/
+

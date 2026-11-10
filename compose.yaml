@@ -1,0 +1,17 @@
+services:
+  cowrie:
+    image: cowrie/cowrie:latest
+    container_name: cloudtrap-cowrie
+    restart: unless-stopped
+
+    ports:
+      - "127.0.0.1:2222:2222"
+
+    volumes:
+      - ./data/cowrie/var:/cowrie/cowrie-git/var
+
+    security_opt:
+      - no-new-privileges:true
+
+    cap_drop:
+      - ALL
