@@ -195,8 +195,8 @@ def detect_threats(
                     session_id=success["session_id"],
                     occurred_at=success["timestamp"].isoformat(),
                     description=(
-                        "A successful login followed failed "
-                        "authentication attempts from the same IP."
+                        "Failed authentication attempts were followed by a "
+                        "successful login from the same IP."
                     ),
                     preceding_failures=len(prior_failures),
                     window_minutes=success_window_minutes,

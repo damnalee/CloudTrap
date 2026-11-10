@@ -1,3 +1,13 @@
+variable "localstack_endpoint" {
+  description = "LocalStack endpoint. Keep this pointed at localhost for the zero-spend demo."
+  type        = string
+  default     = "http://localhost:4566"
+  validation {
+    condition     = can(regex("^http://(localhost|127\\.0\\.0\\.1)(:[0-9]+)?$", var.localstack_endpoint))
+    error_message = "For this demo, localstack_endpoint must be a localhost HTTP endpoint."
+  }
+}
+
 variable "aws_region" {
   description = "AWS region for CloudTrap resources."
   type        = string
@@ -7,7 +17,7 @@ variable "aws_region" {
 variable "environment" {
   description = "Environment tag applied to CloudTrap resources."
   type        = string
-  default     = "production"
+  default     = "demo"
 }
 
 variable "raw_log_retention_days" {

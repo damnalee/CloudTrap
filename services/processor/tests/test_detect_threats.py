@@ -69,6 +69,8 @@ class TestCloudTrapThreatDetection(unittest.TestCase):
                 for a in alerts
             )
         )
+        alert = next(a for a in alerts if a["rule_id"] == "authentication.failure_then_success")
+        self.assertIn("Failed authentication attempts were followed", alert["description"])
 
     def test_remote_script_execution(self):
         events = [

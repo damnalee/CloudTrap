@@ -27,6 +27,14 @@ output "alerts_topic_arn" {
   value = aws_sns_topic.alerts.arn
 }
 
-output "cloudwatch_dashboard_url" {
-  value = "https://${var.aws_region}.console.aws.amazon.com/cloudwatch/home?region=${var.aws_region}#dashboards:name=CloudTrap-Security"
+
+
+output "cloudwatch_dashboard_name" {
+  description = "Dashboard name inside LocalStack CloudWatch."
+  value       = aws_cloudwatch_dashboard.main.dashboard_name
+}
+
+output "localstack_endpoint" {
+  description = "The local-only AWS API endpoint used by Terraform."
+  value       = var.localstack_endpoint
 }

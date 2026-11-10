@@ -46,7 +46,7 @@ h1{font-size:21px;letter-spacing:.2px;margin:0}.sub{color:var(--muted);font-size
   <header class="top">
     <div class="brand">
       <div class="mark">CT</div>
-      <div><h1>CloudTrap</h1><div class="sub">Honeypot security operations · Local AWS data</div></div>
+      <div><h1>CloudTrap</h1><div class="sub">Honeypot security operations · Synthetic local demo · No cloud connection</div></div>
     </div>
     <div class="actions">
       <div class="status"><span class="dot"></span><span id="updated">Connecting…</span></div>
@@ -81,7 +81,7 @@ h1{font-size:21px;letter-spacing:.2px;margin:0}.sub{color:var(--muted);font-size
       <div class="card"><h2>Recent activity</h2><div id="activity-list"><div class="empty">No event data yet.</div></div></div>
     </div>
   </section>
-  <div class="foot">CloudTrap local dashboard · DynamoDB-backed view · Credentials and raw command text are never served</div>
+  <div class="foot">CloudTrap local demo · No AWS connection or cloud spend · Credentials and raw command text are never served</div>
 </main>
 <script>
 const $ = id => document.getElementById(id);
@@ -293,9 +293,101 @@ def make_dynamodb_snapshot():
     return assemble_dynamodb_snapshot(event_rows, alert_rows, incident_rows)
 
 
+
+def read_jsonl_events(filename, limit=1000):
+    """Read JSONL records while exposing only approved, non-secret fields."""
+    path = DATA_DIR / filename
+    allowed = ("timestamp", "event_type", "source_ip", "session_id", "protocol", "auth_result")
+    events = []
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(row, dict):
+                    events.append({key: row[key] for key in allowed if row.get(key) is not None})
+    except OSError:
+        return []
+    return events[-limit:]
+
+
+def make_demo_snapshot():
+    """Assemble the dashboard from synthetic files only; never contact AWS."""
+    events = read_jsonl_events("simulated_campaign.jsonl")
+    alert_doc = read_json("simulated_alerts.json", {"alerts": []})
+    incident_doc = read_json("incidents.json", {"incidents": []})
+
+    event_counts = Counter(item.get("event_type", "unknown") for item in events)
+    source_ips = {item.get("source_ip") for item in events if item.get("source_ip")}
+    sessions = {item.get("session_id") for item in events if item.get("session_id")}
+    successful = sum(item.get("auth_result") == "success" for item in events)
+    failed = sum(item.get("auth_result") == "failed" for item in events)
+    summary = {
+        "total_events": len(events),
+        "unique_sessions": len(sessions),
+        "unique_source_ips": len(source_ips),
+        "login_attempts": {"successful": successful, "failed": failed},
+        "commands_observed": event_counts.get("cowrie.command.input", 0),
+        "events_by_type": dict(sorted(event_counts.items())),
+    }
+
+    alert_fields = (
+        "rule_id", "severity", "source_ip", "session_id", "occurred_at",
+        "description", "failed_attempts", "preceding_failures", "threshold",
+        "window_minutes",
+    )
+    alert_rows = alert_doc.get("alerts", []) if isinstance(alert_doc, dict) else []
+    safe_alerts = [
+        {key: json_native(row[key]) for key in alert_fields if row.get(key) is not None}
+        for row in alert_rows if isinstance(row, dict)
+    ]
+
+    incident_fields = (
+        "incident_id", "severity", "source_ip", "first_seen", "last_seen",
+        "duration_seconds", "alert_count", "attack_patterns", "session_ids",
+    )
+    incident_alert_fields = (
+        "rule_id", "severity", "source_ip", "occurred_at", "description",
+        "failed_attempts", "preceding_failures", "threshold", "window_minutes",
+    )
+    incident_rows = incident_doc.get("incidents", []) if isinstance(incident_doc, dict) else []
+    safe_incidents = []
+    for row in incident_rows:
+        if not isinstance(row, dict):
+            continue
+        item = {key: json_native(row[key]) for key in incident_fields if row.get(key) is not None}
+        nested = row.get("alerts", [])
+        if isinstance(nested, list):
+            item["alerts"] = [
+                {key: json_native(alert[key]) for key in incident_alert_fields if alert.get(key) is not None}
+                for alert in nested if isinstance(alert, dict)
+            ]
+        safe_incidents.append(item)
+
+    severity_counts = Counter(row.get("severity", "unknown") for row in safe_alerts)
+    return {
+        "data_source": "Synthetic local demo",
+        "summary": summary,
+        "alerts": {
+            "total_alerts": len(safe_alerts),
+            "alerts_by_severity": dict(severity_counts),
+            "alerts": safe_alerts[-100:],
+        },
+        "incidents": safe_incidents[-100:],
+        "incident_total": len(safe_incidents),
+        "recent_events": events[-100:],
+    }
+
 def make_snapshot():
-    source = os.environ.get("CLOUDTRAP_DATA_SOURCE", "local").lower()
-    if source in {"dynamodb", "localstack", "auto"}:
+    source = os.environ.get("CLOUDTRAP_DATA_SOURCE", "auto").lower()
+    demo_files = (DATA_DIR / "simulated_campaign.jsonl", DATA_DIR / "simulated_alerts.json", DATA_DIR / "incidents.json")
+    if source in {"demo", "auto"} and all(path.is_file() for path in demo_files):
+        return make_demo_snapshot()
+    if source in {"dynamodb", "localstack"}:
         try:
             return make_dynamodb_snapshot()
         except Exception as error:

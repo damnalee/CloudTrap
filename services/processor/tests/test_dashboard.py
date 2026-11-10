@@ -94,6 +94,32 @@ class TestDashboardDataSafety(unittest.TestCase):
         self.assertEqual(snapshot["incident_total"], 1)
         self.assertEqual(snapshot["incidents"][0]["incident_id"], "INC-TEST")
 
+    def test_demo_snapshot_reads_synthetic_files_and_redacts_commands(self):
+        events = [
+            {"timestamp": "2026-11-10T01:00:00Z", "event_type": "cowrie.login.failed", "source_ip": "203.0.113.10", "session_id": "sim-a", "protocol": "ssh", "command": "never expose this"},
+            {"timestamp": "2026-11-10T01:06:00Z", "event_type": "cowrie.login.success", "source_ip": "203.0.113.10", "session_id": "sim-a", "protocol": "ssh"},
+        ]
+        (dashboard.DATA_DIR / "simulated_campaign.jsonl").write_text(
+            "\n".join(json.dumps(row) for row in events) + "\n", encoding="utf-8"
+        )
+        (dashboard.DATA_DIR / "simulated_alerts.json").write_text(json.dumps({
+            "alerts": [{"rule_id": "authentication.failure_then_success", "severity": "high", "source_ip": "203.0.113.10", "description": "Failed logins followed by success", "command": "do not leak"}]
+        }), encoding="utf-8")
+        (dashboard.DATA_DIR / "incidents.json").write_text(json.dumps({
+            "incidents": [{"incident_id": "INC-DEMO", "severity": "high", "source_ip": "203.0.113.10", "attack_patterns": ["authentication.failure_then_success"], "alerts": [{"rule_id": "authentication.failure_then_success", "description": "Failed logins followed by success", "command": "do not leak"}]}]
+        }), encoding="utf-8")
+
+        snapshot = dashboard.make_demo_snapshot()
+        self.assertEqual(snapshot["data_source"], "Synthetic local demo")
+        self.assertEqual(snapshot["summary"]["total_events"], 2)
+        self.assertEqual(snapshot["summary"]["unique_source_ips"], 1)
+        self.assertEqual(snapshot["alerts"]["total_alerts"], 1)
+        self.assertEqual(snapshot["incident_total"], 1)
+        serialized = json.dumps(snapshot)
+        self.assertNotIn("never expose this", serialized)
+        self.assertNotIn("do not leak", serialized)
+        self.assertNotIn('"command"', serialized)
+
     def test_dynamodb_snapshot_aggregates_safe_fields(self):
         events = [
             {

@@ -1,34 +1,11 @@
-terraform {
-  required_version = ">= 1.6.0"
-
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "= 6.72.0"
-    }
-  }
-}
-
-provider "aws" {
-  region = var.aws_region
-
-  default_tags {
-    tags = {
-      Project     = "CloudTrap"
-      Environment = var.environment
-      ManagedBy   = "Terraform"
-    }
-  }
-}
-
 data "aws_caller_identity" "current" {}
 
 locals {
   name          = "cloudtrap"
-  bucket_name   = "${local.name}-raw-${data.aws_caller_identity.current.account_id}-${var.aws_region}"
+  bucket_name   = "cloudtrap-raw-logs"
   queue_name    = "${local.name}-ingest"
   dlq_name      = "${local.name}-ingest-dlq"
-  function_name = "${local.name}-ingest"
+  function_name = "CloudTrapIngest"
 }
 
 resource "aws_s3_bucket" "raw_logs" {
@@ -133,9 +110,6 @@ resource "aws_dynamodb_table" "events" {
   point_in_time_recovery {
     enabled = true
   }
-  server_side_encryption {
-    enabled = true
-  }
 }
 
 resource "aws_dynamodb_table" "alerts" {
@@ -149,9 +123,6 @@ resource "aws_dynamodb_table" "alerts" {
   }
 
   point_in_time_recovery {
-    enabled = true
-  }
-  server_side_encryption {
     enabled = true
   }
 }
@@ -169,9 +140,6 @@ resource "aws_dynamodb_table" "incidents" {
   point_in_time_recovery {
     enabled = true
   }
-  server_side_encryption {
-    enabled = true
-  }
 }
 
 resource "aws_sns_topic" "alerts" {
@@ -186,7 +154,7 @@ resource "aws_sns_topic_subscription" "email" {
 }
 
 resource "aws_iam_role" "lambda" {
-  name = "CloudTrapIngestLambdaRole"
+  name = "cloudtrap-lambda-role"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -205,7 +173,7 @@ resource "aws_cloudwatch_log_group" "lambda" {
 }
 
 resource "aws_iam_role_policy" "lambda" {
-  name = "CloudTrapIngestPermissions"
+  name = "CloudTrapIngestPolicy"
   role = aws_iam_role.lambda.id
 
   policy = jsonencode({
@@ -279,16 +247,17 @@ resource "aws_lambda_function" "ingest" {
   timeout                        = var.lambda_timeout_seconds
   memory_size                    = var.lambda_memory_size
   reserved_concurrent_executions = 2
-  architectures                  = ["arm64"]
+  architectures                  = ["x86_64"]
 
   environment {
     variables = {
-      RAW_BUCKET_NAME  = aws_s3_bucket.raw_logs.bucket
-      EVENTS_TABLE     = aws_dynamodb_table.events.name
-      ALERTS_TABLE     = aws_dynamodb_table.alerts.name
-      INCIDENTS_TABLE  = aws_dynamodb_table.incidents.name
-      ALERTS_TOPIC_ARN = aws_sns_topic.alerts.arn
-      MAX_OBJECT_BYTES = "26214400"
+      CLOUDTRAP_ENDPOINT_URL = "http://localstack:4566"
+      RAW_BUCKET_NAME        = aws_s3_bucket.raw_logs.bucket
+      EVENTS_TABLE           = aws_dynamodb_table.events.name
+      ALERTS_TABLE           = aws_dynamodb_table.alerts.name
+      INCIDENTS_TABLE        = aws_dynamodb_table.incidents.name
+      ALERTS_TOPIC_ARN       = aws_sns_topic.alerts.arn
+      MAX_OBJECT_BYTES       = "26214400"
     }
   }
 
@@ -321,20 +290,7 @@ resource "aws_s3_bucket_notification" "raw_logs" {
   depends_on = [aws_sqs_queue_policy.allow_s3]
 }
 
-resource "aws_cloudwatch_metric_alarm" "high_severity_alerts" {
-  alarm_name          = "CloudTrap-HighSeverityAlerts"
-  alarm_description   = "One or more high or critical CloudTrap alerts were detected."
-  namespace           = "CloudTrap"
-  metric_name         = "HighSeverityAlerts"
-  statistic           = "Sum"
-  period              = 60
-  evaluation_periods  = 1
-  datapoints_to_alarm = 1
-  threshold           = 1
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  treat_missing_data  = "notBreaching"
-  alarm_actions       = [aws_sns_topic.alerts.arn]
-}
+
 
 resource "aws_cloudwatch_dashboard" "main" {
   dashboard_name = "CloudTrap-Security"
