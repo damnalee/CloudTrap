@@ -137,6 +137,86 @@ To stop Cowrie:
 docker compose stop cowrie
 ~~~
 
+## Local AWS integration with LocalStack
+
+CloudTrap includes a local AWS-style ingestion pipeline. It uses a pinned LocalStack Community image (`localstack/localstack:4.14.0`) because newer LocalStack images require an authentication token. This older image is for local development only and is not a current, security-maintained emulator release. Keep its gateway bound to localhost; do not expose port 4566 publicly.
+
+Start LocalStack:
+
+~~~bash
+docker compose up -d localstack
+docker compose ps
+docker compose logs --tail=80 localstack
+~~~
+
+The ready hook provisions:
+
+| Local AWS service | Purpose |
+|---|---|
+| S3 (`cloudtrap-raw-logs`) | Stores raw JSON objects |
+| SQS (`cloudtrap-ingest`) | Buffers S3 object notifications |
+| SQS DLQ (`cloudtrap-ingest-dlq`) | Holds messages that repeatedly fail |
+| Lambda (`CloudTrapIngest`) | Parses, detects and correlates events |
+| DynamoDB (`CloudTrapEvents`, `CloudTrapAlerts`, `CloudTrapIncidents`) | Stores credential-safe event, alert and incident records |
+| SNS (`cloudtrap-threat-alerts`) | Receives high-severity alert notifications |
+| CloudWatch | Receives aggregate processing metrics and Lambda logs |
+
+Upload the synthetic campaign:
+
+~~~bash
+python3 scripts/generate_test_campaign.py
+./scripts/upload_to_localstack.sh \
+  data/processed/simulated_campaign.jsonl \
+  simulated/demo-campaign.json
+~~~
+
+Upload the real Cowrie JSON log:
+
+~~~bash
+./scripts/upload_to_localstack.sh \
+  data/cowrie/var/log/cowrie/cowrie.json \
+  cowrie/local-session.json
+~~~
+
+S3 notifications enqueue the object event, SQS invokes Lambda, and Lambda writes safe metadata to DynamoDB. The Lambda accepts both raw Cowrie JSON records (`eventid`) and CloudTrap-normalized records (`event_type`). It does not write usernames, passwords, raw commands or raw messages to DynamoDB; command events retain a SHA-256 fingerprint only. High/critical alert notifications are published to the local SNS topic.
+
+Inspect the tables:
+
+~~~bash
+docker compose exec localstack awslocal dynamodb scan \
+  --table-name CloudTrapEvents --select COUNT
+docker compose exec localstack awslocal dynamodb scan \
+  --table-name CloudTrapAlerts --select COUNT
+docker compose exec localstack awslocal dynamodb scan \
+  --table-name CloudTrapIncidents --select COUNT
+~~~
+
+Inspect the CloudTrap metrics:
+
+~~~bash
+docker compose exec localstack awslocal cloudwatch list-metrics \
+  --namespace CloudTrap
+~~~
+
+The dashboard currently reads the local `data/processed` artifacts. It is not yet connected directly to DynamoDB; LocalStack resource ingestion is verified separately using the AWS CLI commands above.
+
+LocalStack state in the selected Community image may be recreated when the container is recreated. The ready hook is idempotent and provisions the resources again, but test records may need to be regenerated and uploaded after a reset.
+
+## AWS Terraform configuration (not deployed)
+
+Terraform defines the real AWS ingestion/storage layer: private encrypted S3, SQS with a dead-letter queue, DynamoDB tables, Lambda, least-privilege execution permissions, SNS notifications, CloudWatch metrics/alarms and a CloudWatch dashboard. It does not yet provision the EC2 Cowrie sensor or a public honeypot network; that design needs an explicit exposure and egress review before deployment.
+
+Build the Lambda archive and validate the Terraform configuration locally:
+
+~~~bash
+python3 scripts/package_lambda.py
+$HOME/.local/bin/terraform fmt -check -recursive
+$HOME/.local/bin/terraform -chdir=infra/terraform init -backend=false
+$HOME/.local/bin/terraform -chdir=infra/terraform validate
+~~~
+
+These commands do not create AWS resources. A Terraform plan requires authenticated AWS credentials; an apply would create billable resources and must be reviewed and explicitly approved first. Copy `infra/terraform/terraform.tfvars.example` to `terraform.tfvars` only when preparing an actual deployment, and never commit the real tfvars file.
+
 ## Tests
 
 Run all unit tests:
@@ -145,7 +225,18 @@ Run all unit tests:
 python3 -m unittest discover -s services/processor/tests -v
 ~~~
 
-The suite covers normalization, credential-field exclusion, malformed records, threat rules, benign activity, and incident grouping.
+The suite covers normalization, credential-field exclusion, malformed records, threat rules, benign activity, and incident grouping. The Lambda-specific tests run inside LocalStack's Python environment:
+
+~~~bash
+docker compose exec -T localstack bash -lc \
+  'PYTHONPATH=/opt/lambda-src/lambda:/opt/lambda-src/processor python -m unittest discover -s /opt/lambda-src/lambda -p test_lambda_local.py -v'
+~~~
+
+Run the local AWS configuration and data-safety checks:
+
+~~~bash
+./scripts/verify_localstack.sh
+~~~
 
 ## Data and Git hygiene
 
@@ -171,8 +262,10 @@ git check-ignore -v data/processed/incidents.json
 - [x] Synthetic attack campaign
 - [x] Local dashboard
 - [ ] Broader rule coverage and additional regression tests
-- [ ] AWS ingestion and storage (S3, SQS, Lambda, DynamoDB)
-- [ ] Notifications and CloudWatch monitoring
-- [ ] Terraform infrastructure and deployment hardening
+- [x] Local AWS ingestion simulation (S3, SQS, Lambda, DynamoDB)
+- [x] Local SNS notifications and CloudWatch metrics
+- [x] Terraform AWS ingestion/storage configuration and validation
+- [ ] EC2 Cowrie sensor, isolated VPC and egress controls
+- [ ] Real AWS deployment after account, region, budget and exposure review
 
-CloudTrap is not yet connected to AWS. The AWS stage will be added after local tests, dashboard verification, and a review of account cost and security settings.
+CloudTrap has been tested against LocalStack, not a real AWS account. Real AWS resources have not been created. The EC2 sensor and public-network design remain outstanding, and deployment requires an authenticated account plus an explicit review of cost, region, inbound exposure and outbound restrictions.

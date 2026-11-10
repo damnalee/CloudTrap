@@ -12,6 +12,18 @@ venv/
 *.pem
 *.key
 
+# Terraform local state and variables
+infra/terraform/build/
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+
+# LocalStack persisted data
+infra/localstack/volume/
+
 # Data
 data/raw/*
 !data/raw/.gitkeep
@@ -28,4 +40,3 @@ data/processed/*
 
 # Cowrie runtime data
 /data/cowrie/
-

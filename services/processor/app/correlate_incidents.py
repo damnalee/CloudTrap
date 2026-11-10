@@ -11,7 +11,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+MODULE_PATH = Path(__file__).resolve()
+PROJECT_ROOT = MODULE_PATH.parents[3] if len(MODULE_PATH.parents) > 3 else MODULE_PATH.parent
 
 DEFAULT_INPUT = PROJECT_ROOT / "data/processed/alerts.json"
 DEFAULT_OUTPUT = PROJECT_ROOT / "data/processed/incidents.json"
