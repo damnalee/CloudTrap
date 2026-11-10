@@ -1,5 +1,7 @@
 # CloudTrap
 
+[![CloudTrap CI](https://github.com/damnalee/CloudTrap/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/damnalee/CloudTrap/actions/workflows/ci.yml)
+
 **A local-first SSH honeypot, rule-based threat detection and incident-correlation lab, with an AWS-style architecture simulated using LocalStack and Terraform.**
 
 > **Zero-spend demo:** Terraform's AWS provider is pinned to `http://localhost:4566` (LocalStack), not AWS. The synthetic demo and unit tests do not contact AWS or consume AWS credits. Preserve this endpoint guardrail.
@@ -91,7 +93,7 @@ CloudTrap/
 ├── scripts/                       # Campaign generator, pipeline, Lambda packager
 ├── services/dashboard/            # Local metadata dashboard
 ├── services/lambda/               # LocalStack Lambda consumer
-├── services/processor/            # Normalization, detection, correlation, tests
+├── services/processor/             # Normalization, detection, correlation, tests
 ├── Makefile
 ├── README.md
 └── README_NON_TECHNICAL.md
